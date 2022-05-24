@@ -1,5 +1,8 @@
-use std::borrow::Cow;
+mod shader_library;
 
+use std::path::PathBuf;
+
+use shader_library::ShaderLibraryBuilder;
 use shaderc::{self, Compiler};
 
 use winit::{
@@ -39,37 +42,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("failed to create appropriate device");
 
-    let vertex_spir_v = Compiler::new()
-        .unwrap()
-        .compile_into_spirv(
-            &include_str!("../shader/vertex_shader.vs"),
-            shaderc::ShaderKind::Vertex,
-            "vertex_shader.vs",
-            "main",
-            None,
-        )
-        .unwrap();
+    let mut builder = ShaderLibraryBuilder::new();
+    let vertex_shader_id = builder.add(&PathBuf::from("shader/vertex_shader.vs"));
+    let fragment_shader_id = builder.add(&PathBuf::from("shader/fragment_shader.fs"));
+    let shader_library = builder.build(&device);
 
-    let fragment_spir_v = Compiler::new()
-        .unwrap()
-        .compile_into_spirv(
-            &include_str!("../shader/fragment_shader.fs"),
-            shaderc::ShaderKind::Fragment,
-            "fragment_shader.vs",
-            "main",
-            None,
-        )
-        .unwrap();
-
-    let vertex_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-        label: None,
-        source: wgpu::ShaderSource::SpirV(Cow::Borrowed(vertex_spir_v.as_binary())),
-    });
-
-    let fragment_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-        label: None,
-        source: wgpu::ShaderSource::SpirV(Cow::Borrowed(fragment_spir_v.as_binary())),
-    });
+    let fragment_shader = shader_library.get(fragment_shader_id).handle();
+    let vertex_shader = shader_library.get(vertex_shader_id).handle();
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
@@ -125,11 +104,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 event: WindowEvent::Resized(size),
                 ..
             } => {
-                config.width = size.width;
-                config.height = size.height;
-                surface.configure(&device, &config);
+                if size.width > 0 && size.height > 0 {
+                    config.width = size.width;
+                    config.height = size.height;
+                    surface.configure(&device, &config);
 
-                window.request_redraw();
+                    window.request_redraw();
+                }
             }
             Event::RedrawRequested(_) => {
                 let frame = surface
