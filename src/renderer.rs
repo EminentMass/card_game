@@ -137,7 +137,7 @@ impl Renderer {
         frame.present();
     }
 
-    pub fn resize_if_needed(&mut self, size: PhysicalSize<u32>, window: &Window) -> () {
+    pub fn resize_if_needed(&mut self, size: &PhysicalSize<u32>, window: &Window) -> () {
         if size.width > 0 && size.height > 0 {
             self.surface_config.width = size.width;
             self.surface_config.height = size.height;
