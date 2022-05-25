@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use shaderc::{Compiler, ShaderKind};
 use wgpu::{Device, ShaderModule};
@@ -28,7 +28,7 @@ impl ToShaderKind for &str {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Shader {
     name: String,
     source_path: PathBuf,
@@ -36,7 +36,7 @@ pub struct Shader {
     entry_point: String,
     shader_kind: ShaderKind,
 
-    handle: Rc<ShaderModule>,
+    handle: Arc<ShaderModule>,
 }
 
 unsafe impl Send for Shader {}
@@ -88,7 +88,7 @@ impl Shader {
                 );
             });
 
-        let handle = Rc::new(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        let handle = Arc::new(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some(name),
             source: wgpu::ShaderSource::SpirV(Cow::Borrowed(artifact.as_binary())),
         }));
@@ -102,7 +102,7 @@ impl Shader {
         }
     }
 
-    pub fn handle(&self) -> Rc<ShaderModule> {
+    pub fn handle(&self) -> Arc<ShaderModule> {
         self.handle.clone()
     }
 
