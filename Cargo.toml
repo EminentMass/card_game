@@ -6,7 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+futures = { version = "0.3.21", features = ["executor"] }
+
+nalgebra = { version = "0.31.0", features = ["bytemuck"] }
+#nom = "7.1.1"
+stl_io = "0.6.0"
+bytemuck = "1.9.1"
+
 tokio = { version = "1.18.2", features = ["full"] }
+
+bevy_ecs = "0.7.0"
 
 log = "0.4.17"
 simple_logger = "2.1.0"

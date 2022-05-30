@@ -39,9 +39,6 @@ pub struct Shader {
     handle: Arc<ShaderModule>,
 }
 
-unsafe impl Send for Shader {}
-unsafe impl Sync for Shader {}
-
 impl Shader {
     pub fn new(device: &Device, source_path: &Path) -> Self {
         ShaderBuilder::new(source_path).build(device)
@@ -131,9 +128,6 @@ pub struct ShaderBuilder {
     shader_kind: ShaderKind,
 }
 
-unsafe impl Send for ShaderBuilder {}
-unsafe impl Sync for ShaderBuilder {}
-
 impl ShaderBuilder {
     pub fn new(source_path: &Path) -> Self {
         let name = source_path
@@ -193,9 +187,6 @@ pub struct ShaderLibrary {
     shaders: Vec<Shader>,
 }
 
-unsafe impl Send for ShaderLibrary {}
-unsafe impl Sync for ShaderLibrary {}
-
 impl ShaderLibrary {
     pub fn empty() -> Self {
         Self::default()
@@ -212,9 +203,6 @@ impl ShaderLibrary {
 pub struct ShaderLibraryBuilder {
     builders: Vec<ShaderBuilder>,
 }
-
-unsafe impl Send for ShaderLibraryBuilder {}
-unsafe impl Sync for ShaderLibraryBuilder {}
 
 impl ShaderLibraryBuilder {
     pub fn new() -> Self {
