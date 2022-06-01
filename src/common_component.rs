@@ -10,7 +10,25 @@ pub struct Transform {
 }
 #[derive(Clone, Debug, Component)]
 pub struct Camera {
-    pub perspective: Perspective3<f32>,
+    pub projection: Perspective3<f32>,
 }
-#[derive(Clone, Debug, Component)]
+#[derive(Copy, Clone, Debug, Component)]
 pub struct MainCamera;
+
+#[derive(Clone, Copy, Debug, Ord, PartialOrd, PartialEq, Eq)]
+pub enum GeometryType {
+    Plane,
+    Cube,
+    Tetrahedron,
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct RenderGeometry {
+    pub geom_type: GeometryType,
+}
+
+impl RenderGeometry {
+    pub fn new(geom_type: GeometryType) -> Self {
+        Self { geom_type }
+    }
+}

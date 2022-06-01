@@ -1,57 +1,72 @@
+use std::ops::Range;
 use std::path::PathBuf;
 
-use bevy_ecs::system::{Query, Res, ResMut};
-use nalgebra::{Matrix4, Vector3};
+use bevy_ecs::system::{Query, ResMut};
+use nalgebra::Matrix4;
 use wgpu::{util::DeviceExt, Adapter, Device, Instance, Queue, Surface};
 
 use winit::{dpi::PhysicalSize, window::Window};
 
-use crate::common_component::{Camera, Transform};
+use crate::common_component::{Camera, GeometryType, MainCamera, RenderGeometry, Transform};
+use crate::geometry_library::GeometryLibrary;
 use crate::shader_library::{ShaderLibrary, ShaderLibraryBuilder};
 
 use crate::data_types::Vertex;
-use crate::time::TimeResource;
-
-macro_rules! v {
-    ($a:expr, $b:expr, $c:expr) => {
-        Vertex {
-            position: [$a, $b, $c, 1.0],
-            normal: [0.0, 0.0, 0.0, 0.0],
-            texture: [0.0, 0.0],
-        }
-    };
-}
-
-// origin is center of object. base is under the y plane with the point sticking up
-const TETRAHEDRON_VERTICES: [Vertex; 4] = [
-    v![0.0, -0.57735, -1.15470], // base
-    v![-1.0, -0.57735, 0.57735],
-    v![1.0, -0.57735, 0.57735],
-    v![0.0, 1.15470, 0.0], // point sticking up along y
-];
-const TETRAHEDRON_INDICES: [u16; 12] = [0, 1, 2, 0, 3, 1, 3, 0, 2, 2, 1, 3];
-//const TETRAHEDRON_INDICES: [u16; 12] = [2, 1, 0, 1, 3, 0, 2, 0, 3, 3, 1, 2];
+use crate::util::BlockOn;
 
 // Render System
 pub fn render(
     mut state: ResMut<RenderState>,
-    time: Res<TimeResource>,
-    cameras: Query<(&Camera, &Transform)>,
+    camera: Query<(&Camera, &Transform, &MainCamera)>,
+    geoms: Query<(&RenderGeometry, &Transform)>,
 ) {
-    match cameras.get_single() {
-        Ok((cam, pos)) => {
-            let r = time.time.as_secs_f32() * 0.5;
+    match camera.get_single() {
+        Ok((cam, cam_pos, _)) => {
+            // update transform info to transform buffer on gpu
+            let mut geoms: Vec<_> = geoms
+                .iter()
+                .map(|(RenderGeometry { geom_type }, pos)| (*geom_type, pos.isometry.to_matrix()))
+                .collect();
 
-            let t = Vector3::z() * -5.0;
-            let model = Matrix4::<f32>::new_translation(&t)
-                * Matrix4::new_rotation(Vector3::y() * r)
-                * Matrix4::new_scaling(2.0);
+            geoms.sort_by(|(g1, _), (g2, _)| g1.cmp(g2));
 
-            let mvp: Matrix4<f32> =
-                cam.perspective.as_matrix() * pos.isometry.inverse().to_matrix() * model;
-            state.render(mvp);
+            let (plane_count, cube_count, tetrahedron_count): (u32, u32, u32) =
+                geoms.iter().fold((0, 0, 0), |a, (g, _)| match g {
+                    GeometryType::Plane => (a.0 + 1, a.1, a.2),
+                    GeometryType::Cube => (a.0, a.1 + 1, a.2),
+                    GeometryType::Tetrahedron => (a.0, a.1, a.2 + 1),
+                });
+
+            let (plane_range, cube_range, tetrahedron_range) = {
+                let mat_size = std::mem::size_of::<Matrix4<f32>>() as u32;
+                let plane_offset = plane_count * mat_size;
+                let cube_offset = plane_offset + cube_count * mat_size;
+                let tetrahedron_offset = cube_offset + tetrahedron_count * mat_size;
+
+                (
+                    0..plane_offset as u64,
+                    plane_offset as u64..cube_offset as u64,
+                    cube_offset as u64..tetrahedron_offset as u64,
+                )
+            };
+
+            let data: Vec<_> = geoms.iter().map(|(_, m)| *m).collect();
+
+            state.write_to_instance_buffer(&data);
+
+            let view_projection: Matrix4<f32> =
+                cam.projection.as_matrix() * cam_pos.isometry.inverse().to_matrix();
+            state.render(
+                view_projection,
+                plane_count,
+                cube_count,
+                tetrahedron_count,
+                plane_range,
+                cube_range,
+                tetrahedron_range,
+            );
         }
-        Err(e) => log::error!("failed to access camera entity for render call: {}", e),
+        Err(e) => log::error!("failed to access main camera entity for render call: {}", e),
     }
 }
 
@@ -62,20 +77,24 @@ pub struct RenderState {
     adapter: Adapter,
     device: Device,
     queue: Queue,
-    shader_library: ShaderLibrary,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+    instance_buffer: wgpu::Buffer,
+    instance_buffer_len: u64,
 
     depth_stencil_texture: wgpu::Texture,
     depth_stencil_view: wgpu::TextureView,
     depth_stencil_sampler: wgpu::Sampler,
+
+    shader_library: ShaderLibrary,
+    geometry_library: GeometryLibrary,
 }
 
 impl RenderState {
-    pub async fn init(window: &Window) -> Self {
+    pub fn init(window: &Window) -> Self {
         let size = window.inner_size();
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
+        let instance = wgpu::Instance::new(wgpu::Backends::VULKAN);
         let surface = unsafe { instance.create_surface(&window) };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -83,7 +102,7 @@ impl RenderState {
                 force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
             })
-            .await
+            .block_on()
             .expect("failed to find appropriate adapter");
 
         let (device, queue) = adapter
@@ -99,7 +118,7 @@ impl RenderState {
                 },
                 None,
             )
-            .await
+            .block_on()
             .expect("failed to create appropriate device");
 
         let mut builder = ShaderLibraryBuilder::new();
@@ -109,6 +128,8 @@ impl RenderState {
 
         let fragment_shader = shader_library.get(fragment_shader_id).clone();
         let vertex_shader = shader_library.get(vertex_shader_id).clone();
+
+        let geometry_library = GeometryLibrary::new();
 
         let depth_stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -158,14 +179,22 @@ impl RenderState {
             vertex: wgpu::VertexState {
                 module: &vertex_shader.handle(),
                 entry_point: vertex_shader.entry_point(),
-                buffers: &[Vertex::desc()],
+                buffers: &[Vertex::desc(), crate::data_types::Instance::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader.handle(),
                 entry_point: fragment_shader.entry_point(),
                 targets: &[swapchain_format.into()],
             }),
-            primitive: wgpu::PrimitiveState::default(),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Front),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: true,
@@ -189,14 +218,22 @@ impl RenderState {
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&TETRAHEDRON_VERTICES),
+            contents: bytemuck::cast_slice(geometry_library.geometry_vertex_data()),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&TETRAHEDRON_INDICES),
+            contents: bytemuck::cast_slice(geometry_library.geometry_index_data()),
             usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let instance_buffer_len = 5;
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: std::mem::size_of::<Matrix4<f32>>() as u64 * instance_buffer_len as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         Self {
@@ -206,18 +243,60 @@ impl RenderState {
             adapter,
             device,
             queue,
-            shader_library,
             render_pipeline,
             vertex_buffer,
             index_buffer,
+            instance_buffer,
+            instance_buffer_len,
 
             depth_stencil_texture,
             depth_stencil_view,
             depth_stencil_sampler,
+
+            shader_library,
+            geometry_library,
         }
     }
 
-    pub fn render(&mut self, mvp: Matrix4<f32>) {
+    pub fn write_to_instance_buffer(&mut self, data: &[Matrix4<f32>]) {
+        let bytes = bytemuck::cast_slice(&data);
+        if data.len() > self.instance_buffer_len as usize {
+            // double
+            let new_len: u64 = {
+                let mut len = self.instance_buffer_len * 2;
+                while data.len() > len as usize {
+                    len *= 2;
+                }
+                len as u64
+            };
+            self.instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: std::mem::size_of::<Matrix4<f32>>() as u64 * new_len,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+
+            self.instance_buffer.slice(..).get_mapped_range_mut()[0..bytes.len()]
+                .copy_from_slice(bytes);
+            self.instance_buffer.unmap();
+
+            self.instance_buffer_len = new_len;
+        } else {
+            self.queue
+                .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&data));
+        }
+    }
+
+    pub fn render(
+        &mut self,
+        mvp: Matrix4<f32>,
+        plane_count: u32,
+        cube_count: u32,
+        tetrahedron_count: u32,
+        plane_range: Range<u64>,
+        cube_range: Range<u64>,
+        tetrahedron_range: Range<u64>,
+    ) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Outdated) => return, // Redraw is sometimes sent before resize
@@ -258,9 +337,55 @@ impl RenderState {
                 0,
                 bytemuck::cast_slice(&mvp.as_slice()),
             );
-            rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            rpass.draw_indexed(0..12, 0, 0..1);
+
+            // Draw planes
+            rpass.set_vertex_buffer(
+                0,
+                self.vertex_buffer
+                    .slice(GeometryLibrary::PLANE_VERTEX_OFFSET..),
+            );
+            rpass.set_vertex_buffer(1, self.instance_buffer.slice(plane_range));
+            rpass.set_index_buffer(
+                self.index_buffer
+                    .slice(GeometryLibrary::PLANE_INDEX_OFFSET..),
+                wgpu::IndexFormat::Uint16,
+            );
+
+            rpass.draw_indexed(0..GeometryLibrary::PLANE_INDEX_COUNT, 0, 0..plane_count);
+
+            // Draw Cubes
+            rpass.set_vertex_buffer(
+                0,
+                self.vertex_buffer
+                    .slice(GeometryLibrary::CUBE_VERTEX_OFFSET..),
+            );
+            rpass.set_vertex_buffer(1, self.instance_buffer.slice(cube_range));
+            rpass.set_index_buffer(
+                self.index_buffer
+                    .slice(GeometryLibrary::CUBE_INDEX_OFFSET..),
+                wgpu::IndexFormat::Uint16,
+            );
+
+            rpass.draw_indexed(0..GeometryLibrary::CUBE_INDEX_COUNT, 0, 0..cube_count);
+
+            // Draw tetrahedrons
+            rpass.set_vertex_buffer(
+                0,
+                self.vertex_buffer
+                    .slice(GeometryLibrary::TETRAHEDRON_VERTEX_OFFSET..),
+            );
+            rpass.set_vertex_buffer(1, self.instance_buffer.slice(tetrahedron_range));
+            rpass.set_index_buffer(
+                self.index_buffer
+                    .slice(GeometryLibrary::TETRAHEDRON_INDEX_OFFSET..),
+                wgpu::IndexFormat::Uint16,
+            );
+
+            rpass.draw_indexed(
+                0..GeometryLibrary::TETRAHEDRON_INDEX_COUNT,
+                0,
+                0..tetrahedron_count,
+            );
         }
 
         self.queue.submit(Some(encoder.finish()));

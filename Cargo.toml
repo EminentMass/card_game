@@ -6,25 +6,24 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-
-futures = { version = "0.3.21", features = ["executor"] }
-
-nalgebra = { version = "0.31.0", features = ["bytemuck"] }
-#nom = "7.1.1"
-stl_io = "0.6.0"
-bytemuck = "1.9.1"
-
-tokio = { version = "1.18.2", features = ["full"] }
-
-bevy_ecs = "0.7.0"
-
 log = "0.4.17"
 simple_logger = "2.1.0"
-#env_logger = "0.9.0"
-
+bytemuck = { verstion = "1.9.1", features = ["derive"] }
+nalgebra = { version = "0.31.0", features = ["bytemuck"] }
+bevy_ecs = "0.7.0"
 winit = "0.26.1"
 wgpu = { version = "0.12.0", features = ["spirv"] }
 shaderc = "0.8.0"
-egui = "0.18.1"
-egui-wgpu = "0.18.0"
-egui-winit = "0.18.0"
+
+
+
+
+
+# Previously used crates might want to bring back at some point
+#nom = "7.1.1"
+#stl_io = "0.6.0"
+#tokio = { version = "1.18.2", features = ["full"] }
+#env_logger = "0.9.0"
+#egui = "0.18.1"
+#egui-wgpu = "0.18.0"
+#egui-winit = "0.18.0"

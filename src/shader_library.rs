@@ -232,10 +232,9 @@ impl ShaderLibraryBuilder {
 #[cfg(test)]
 mod tests {
 
-    use super::*;
+    use crate::util::BlockOn;
 
-    use std::future::Future;
-    use tokio::runtime::Runtime;
+    use super::*;
 
     use wgpu::{Adapter, Device, Instance, Queue};
 
@@ -267,80 +266,68 @@ mod tests {
         (instance, adapter, device, queue)
     }
 
-    fn run_async<F: Future>(func: F) {
-        let rt = Runtime::new().expect("unable to create tokio runtime");
-
-        rt.block_on(func);
-    }
-
     #[test]
     fn shader_builder_generic_test() {
-        run_async(async {
-            let (_instance, _adapter, device, _queue) = init_wgpu().await;
+        let (_instance, _adapter, device, _queue) = init_wgpu().block_on();
 
-            let path = PathBuf::from("shader/vertex_shader.vs");
-            let builder = ShaderBuilder::new(&path);
-            let shader = builder.build(&device);
+        let path = PathBuf::from("shader/vertex_shader.vs");
+        let builder = ShaderBuilder::new(&path);
+        let shader = builder.build(&device);
 
-            assert_eq!(
-                shader.source_path.to_str().unwrap(),
-                "shader/vertex_shader.vs"
-            );
+        assert_eq!(
+            shader.source_path.to_str().unwrap(),
+            "shader/vertex_shader.vs"
+        );
 
-            assert_eq!(shader.name, "vertex_shader.vs");
-            assert_eq!(shader.shader_kind, ShaderKind::Vertex);
-            assert_eq!(shader.entry_point, "main");
-        });
+        assert_eq!(shader.name, "vertex_shader.vs");
+        assert_eq!(shader.shader_kind, ShaderKind::Vertex);
+        assert_eq!(shader.entry_point, "main");
     }
 
     #[test]
     fn shader_builder_specific_test() {
-        run_async(async {
-            let (_instance, _adapter, device, _queue) = init_wgpu().await;
+        let (_instance, _adapter, device, _queue) = init_wgpu().block_on();
 
-            let path = PathBuf::from("shader/vertex_shader.vs");
-            let builder = ShaderBuilder::new(&path)
-                .name("Joblin")
-                .shader_kind(ShaderKind::Vertex)
-                .entry_point("main2");
-            let shader = builder.build(&device);
+        let path = PathBuf::from("shader/vertex_shader.vs");
+        let builder = ShaderBuilder::new(&path)
+            .name("Joblin")
+            .shader_kind(ShaderKind::Vertex)
+            .entry_point("main2");
+        let shader = builder.build(&device);
 
-            assert_eq!(
-                shader.source_path.to_str().unwrap(),
-                "shader/vertex_shader.vs"
-            );
+        assert_eq!(
+            shader.source_path.to_str().unwrap(),
+            "shader/vertex_shader.vs"
+        );
 
-            assert_eq!(shader.name, "Joblin");
-            assert_eq!(shader.shader_kind, ShaderKind::Vertex);
-            assert_eq!(shader.entry_point, "main2");
-        });
+        assert_eq!(shader.name, "Joblin");
+        assert_eq!(shader.shader_kind, ShaderKind::Vertex);
+        assert_eq!(shader.entry_point, "main2");
     }
 
     #[test]
     fn shader_library_builder_generic_test() {
-        run_async(async {
-            let (_instance, _adapter, device, _queue) = init_wgpu().await;
+        let (_instance, _adapter, device, _queue) = init_wgpu().block_on();
 
-            let path = PathBuf::from("shader/vertex_shader.vs");
-            let path2 = PathBuf::from("shader/fragment_shader.fs");
+        let path = PathBuf::from("shader/vertex_shader.vs");
+        let path2 = PathBuf::from("shader/fragment_shader.fs");
 
-            let mut builder = ShaderLibraryBuilder::new();
-            let shader = builder.add(&path);
-            let shader2 = builder.add(&path2);
-            let library = builder.build(&device);
+        let mut builder = ShaderLibraryBuilder::new();
+        let shader = builder.add(&path);
+        let shader2 = builder.add(&path2);
+        let library = builder.build(&device);
 
-            let shader = library.get(shader);
+        let shader = library.get(shader);
 
-            assert_eq!(
-                shader.source_path.to_str().unwrap(),
-                "shader/vertex_shader.vs"
-            );
+        assert_eq!(
+            shader.source_path.to_str().unwrap(),
+            "shader/vertex_shader.vs"
+        );
 
-            let shader = library.get(shader2);
-            assert_eq!(
-                shader.source_path.to_str().unwrap(),
-                "shader/fragment_shader.fs"
-            );
-        });
+        let shader = library.get(shader2);
+        assert_eq!(
+            shader.source_path.to_str().unwrap(),
+            "shader/fragment_shader.fs"
+        );
     }
 }
