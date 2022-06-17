@@ -8,14 +8,14 @@ edition = "2021"
 [dependencies]
 log = "0.4.17"
 simple_logger = "2.1.0"
-bytemuck = { verstion = "1.9.1", features = ["derive"] }
+bytemuck = { version = "1.9.1", features = ["derive"] }
 nalgebra = { version = "0.31.0", features = ["bytemuck"] }
 bevy_ecs = "0.7.0"
 winit = "0.26.1"
-wgpu = { version = "0.12.0", features = ["spirv"] }
+wgpu = { version = "0.12.0", features = ["spirv", "glsl"] }
+
+[build-dependencies]
 shaderc = "0.8.0"
-
-
 
 
 

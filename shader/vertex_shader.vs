@@ -1,4 +1,5 @@
 #version 460 core
+#pragma shader_stage(vertex)
 
 layout (push_constant) uniform PushConstants {
 	mat4 view_projection;

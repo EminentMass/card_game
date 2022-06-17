@@ -122,8 +122,8 @@ impl RenderState {
             .expect("failed to create appropriate device");
 
         let mut builder = ShaderLibraryBuilder::new();
-        let vertex_shader_id = builder.add(&PathBuf::from("shader/vertex_shader.vs"));
-        let fragment_shader_id = builder.add(&PathBuf::from("shader/fragment_shader.fs"));
+        let vertex_shader_id = builder.add(&PathBuf::from("shader/vertex_shader.vsspirv"));
+        let fragment_shader_id = builder.add(&PathBuf::from("shader/fragment_shader.fsspirv"));
         let shader_library = builder.build(&device);
 
         let fragment_shader = shader_library.get(fragment_shader_id).clone();

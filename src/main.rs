@@ -2,6 +2,7 @@ mod common_component;
 mod data_types;
 mod game;
 mod geometry_library;
+mod pvnrt;
 mod render_system;
 mod shader_library;
 mod time;
