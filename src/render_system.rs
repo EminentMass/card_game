@@ -1,5 +1,4 @@
 use std::ops::Range;
-use std::path::PathBuf;
 
 use bevy_ecs::system::{Query, ResMut};
 use nalgebra::Matrix4;
@@ -9,7 +8,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::common_component::{Camera, GeometryType, MainCamera, RenderGeometry, Transform};
 use crate::geometry_library::GeometryLibrary;
-use crate::shader_library::{ShaderLibrary, ShaderLibraryBuilder};
+use crate::shader_library::{ShaderId, ShaderLibrary};
 
 use crate::data_types::Vertex;
 use crate::util::BlockOn;
@@ -87,6 +86,11 @@ pub struct RenderState {
     depth_stencil_view: wgpu::TextureView,
     depth_stencil_sampler: wgpu::Sampler,
 
+    texture: wgpu::Texture,
+    texture_view: wgpu::TextureView,
+    texture_sampler: wgpu::Sampler,
+    texture_bind_group: wgpu::BindGroup,
+
     shader_library: ShaderLibrary,
     geometry_library: GeometryLibrary,
 }
@@ -121,15 +125,97 @@ impl RenderState {
             .block_on()
             .expect("failed to create appropriate device");
 
-        let mut builder = ShaderLibraryBuilder::new();
-        let vertex_shader_id = builder.add(&PathBuf::from("shader/vertex_shader.vsspirv"));
-        let fragment_shader_id = builder.add(&PathBuf::from("shader/fragment_shader.fsspirv"));
-        let shader_library = builder.build(&device);
+        let shader_library = ShaderLibrary::load_all(&device);
 
-        let fragment_shader = shader_library.get(fragment_shader_id).clone();
-        let vertex_shader = shader_library.get(vertex_shader_id).clone();
+        let fragment_shader = shader_library.get(ShaderId::FragmentShader).clone();
+        let vertex_shader = shader_library.get(ShaderId::VertexShader).clone();
 
         let geometry_library = GeometryLibrary::new();
+
+        let texture_data: [u8; 4 * 2 * 2] = [
+            0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255,
+        ];
+
+        let texture_size = wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        };
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        });
+
+        queue.write_texture(
+            wgpu::ImageCopyTextureBase {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &texture_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: std::num::NonZeroU32::new(4 * texture_size.width),
+                rows_per_image: std::num::NonZeroU32::new(4 * texture_size.height),
+            },
+            texture_size,
+        );
+
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("texture bind group"),
+            layout: &&texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture_sampler),
+                },
+            ],
+        });
 
         let depth_stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -162,7 +248,7 @@ impl RenderState {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&texture_bind_group_layout],
             push_constant_ranges: &[wgpu::PushConstantRange {
                 stages: wgpu::ShaderStages::all(),
                 range: 0..(std::mem::size_of::<Matrix4<f32>>() as u32),
@@ -253,6 +339,11 @@ impl RenderState {
             depth_stencil_view,
             depth_stencil_sampler,
 
+            texture,
+            texture_view,
+            texture_sampler,
+            texture_bind_group,
+
             shader_library,
             geometry_library,
         }
@@ -332,6 +423,7 @@ impl RenderState {
             });
 
             rpass.set_pipeline(&self.render_pipeline);
+            rpass.set_bind_group(0, &self.texture_bind_group, &[]);
             rpass.set_push_constants(
                 wgpu::ShaderStages::all(),
                 0,

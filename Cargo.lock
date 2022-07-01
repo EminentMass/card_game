@@ -270,11 +270,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "card-game"
+name = "card_game"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "bytemuck",
+ "ktx2",
  "log",
  "nalgebra",
  "shaderc",
@@ -788,6 +789,15 @@ checksum = "8c2352bd1d0bceb871cb9d40f24360c8133c11d7486b68b5381c1dd1a32015e3"
 dependencies = [
  "libc",
  "libloading",
+]
+
+[[package]]
+name = "ktx2"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87d65e08a9ec02e409d27a0139eaa6b9756b4d81fe7cde71f6941a83730ce838"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]

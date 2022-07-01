@@ -8,7 +8,6 @@ use shaderc::Compiler;
 
 // These map source extensions to compiled extensions
 const SHADER_SOURCE_EXTENSIONS: [&str; 2] = ["vs", "fs"];
-const SHADER_SPIR_C_EXTENSIONS: [&str; 2] = ["vsspirv", "fsspirv"];
 
 const SHADER_SOURCE_DIRECTORY: &str = "shader/";
 
@@ -72,21 +71,23 @@ fn shader_files_at<'a>(
     Ok(Box::new(iter))
 }
 
-fn map_file_extension(path: &Path) -> PathBuf {
+fn map_file_extension(path: &Path, append: &str) -> PathBuf {
     let extension_out = {
         let extension = path
             .extension()
-            .expect("failed to get extension from shader source path");
-        let (_, new_path) = SHADER_SOURCE_EXTENSIONS
-            .iter()
-            .zip(SHADER_SPIR_C_EXTENSIONS)
-            .find(|(&src, _)| src == extension)
-            .expect("file extension is not that of a shader");
-        new_path
+            .expect("failed to get extension from shader source path")
+            .to_str()
+            .unwrap();
+
+        if SHADER_SOURCE_EXTENSIONS.contains(&extension) {
+            format!("{}{}", extension, append)
+        } else {
+            panic!("file extension is not that of a shader");
+        }
     };
 
     let mut path_out = path.to_owned();
-    path_out.set_extension(&extension_out);
+    path_out.set_extension(extension_out);
     path_out
 }
 
@@ -111,7 +112,7 @@ fn compile_shader(compiler: &Compiler, path: &Path) -> Result<(), Box<dyn std::e
     )?;
 
     // add compiled file extension
-    let path_out = map_file_extension(path);
+    let path_out = map_file_extension(path, "spirv");
 
     let mut file_out = OpenOptions::new()
         .write(true)
@@ -120,6 +121,25 @@ fn compile_shader(compiler: &Compiler, path: &Path) -> Result<(), Box<dyn std::e
         .open(path_out)?;
 
     file_out.write_all(artifact.as_binary_u8())?;
+
+    // also write out assembly for debugging
+    let assembly = compiler.compile_into_spirv_assembly(
+        &contents,
+        shaderc::ShaderKind::InferFromSource, // All shader sources must have #pragma shader_stage()
+        &path.display().to_string(),
+        "main",
+        None,
+    )?;
+
+    let path_out = map_file_extension(path, "spirvasm");
+
+    let mut file_out = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(path_out)?;
+
+    file_out.write_all(assembly.as_text().as_bytes())?;
 
     Ok(())
 }

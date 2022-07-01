@@ -29,6 +29,14 @@ impl Vertex {
             texture: Vector2::zeros(),
         }
     }
+
+    pub fn pos_and_tex(pos: &Vector3<f32>, tex: &Vector2<f32>) -> Self {
+        Self {
+            position: [pos.x, pos.y, pos.z, 1.0].into(),
+            normal: Vector4::zeros(),
+            texture: *tex,
+        }
+    }
 }
 
 pub struct Instance {

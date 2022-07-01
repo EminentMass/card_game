@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -7,16 +8,24 @@ use std::sync::Arc;
 
 use wgpu::{Device, ShaderModule};
 
-type ShaderId = usize;
+crate::macros::parallel_enum_values!(
+    (
+        ShaderId,
+        SHADER_PATH_PAIRS,
+        str,
+    )
+    VertexShader -> "shader/vertex_shader.vsspirv",
+    FragmentShader -> "shader/fragment_shader.fsspirv",
+);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Shader {
     name: String,
     source_path: PathBuf,
 
     entry_point: String,
 
-    handle: Arc<ShaderModule>,
+    handle: ShaderModule,
 }
 
 impl Shader {
@@ -25,28 +34,22 @@ impl Shader {
     }
 
     pub fn all(device: &Device, source_path: &Path, name: &str, entry_point: &str) -> Self {
-        let mut file = match File::open(source_path) {
-            Err(why) => {
-                panic!(
-                    "failed to open shader file {}: {}",
-                    source_path.display(),
-                    why
-                );
-            }
-            Ok(file) => file,
-        };
+        let mut file = File::open(source_path).unwrap_or_else(|e| {
+            panic!(
+                "failed to open shader file {}: {}",
+                source_path.display(),
+                e
+            )
+        });
 
         let mut contents = Vec::new();
-        match file.read_to_end(&mut contents) {
-            Err(why) => {
-                panic!(
-                    "failed to read shader file {}: {}",
-                    source_path.display(),
-                    why
-                );
-            }
-            Ok(_) => (),
-        }
+        file.read_to_end(&mut contents).unwrap_or_else(|e| {
+            panic!(
+                "failed to read shader file {}: {}",
+                source_path.display(),
+                e
+            )
+        });
 
         assert!(
             contents.len() % 4 == 0,
@@ -54,10 +57,10 @@ impl Shader {
         );
         let data = bytemuck::cast_slice(&contents);
 
-        let handle = Arc::new(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        let handle = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some(name),
             source: wgpu::ShaderSource::SpirV(Cow::Borrowed(data)),
-        }));
+        });
 
         Self {
             name: name.to_string(),
@@ -67,8 +70,8 @@ impl Shader {
         }
     }
 
-    pub fn handle(&self) -> Arc<ShaderModule> {
-        self.handle.clone()
+    pub fn handle(&self) -> &ShaderModule {
+        &self.handle
     }
 
     pub fn name(&self) -> &str {
@@ -134,54 +137,41 @@ impl ShaderBuilder {
 
 #[derive(Default)]
 pub struct ShaderLibrary {
-    shaders: Vec<Shader>,
+    shaders: HashMap<ShaderId, Arc<Shader>>,
 }
 
 impl ShaderLibrary {
-    pub fn empty() -> Self {
-        Self::default()
+    // TODO: implement on the fly shader loading and unloading.
+    pub fn load_as_needed() -> Self {
+        todo!();
+    }
+
+    pub fn load_all(device: &Device) -> Self {
+        let shaders = SHADER_PATH_PAIRS
+            .iter()
+            .map(|(id, s)| {
+                (
+                    *id,
+                    Arc::new(ShaderBuilder::new(Path::new(s)).build(device)),
+                )
+            })
+            .collect();
+
+        Self { shaders }
     }
 
     pub fn get(&self, id: ShaderId) -> &Shader {
         &self
             .shaders
-            .get(id)
+            .get(&id)
             .expect("tried to access shader with bad id")
-    }
-}
-
-pub struct ShaderLibraryBuilder {
-    builders: Vec<ShaderBuilder>,
-}
-
-impl ShaderLibraryBuilder {
-    pub fn new() -> Self {
-        Self {
-            builders: Vec::new(),
-        }
-    }
-
-    // Both add and add_builders cant use standard builder format as the ShaderId (Index within library) has to be available to the caller.
-    pub fn add(&mut self, source_path: &Path) -> ShaderId {
-        self.builders.push(ShaderBuilder::new(source_path));
-        self.builders.len() - 1
-    }
-
-    pub fn add_builder(&mut self, builder: ShaderBuilder) -> ShaderId {
-        self.builders.push(builder);
-        self.builders.len() - 1
-    }
-
-    pub fn build(self, device: &Device) -> ShaderLibrary {
-        ShaderLibrary {
-            shaders: self.builders.into_iter().map(|b| b.build(device)).collect(),
-        }
     }
 }
 
 // tests are outdated shaders use features that aren't requested
 // TODO: update test to either not actually create module or use wgpu features
 
+/*
 #[cfg(test)]
 mod tests {
 
@@ -279,3 +269,4 @@ mod tests {
         );
     }
 }
+*/
