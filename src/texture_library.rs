@@ -129,6 +129,7 @@ pub struct TextureLibrary {
 
 impl TextureLibrary {
     // TODO: implement on the fly shader loading and unloading.
+    #[allow(dead_code)]
     pub fn load_as_needed() -> Self {
         todo!();
     }

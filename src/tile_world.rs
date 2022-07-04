@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub struct TileWorld {
     pub chunks: Vec<TileChunk>,
 }

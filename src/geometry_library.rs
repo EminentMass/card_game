@@ -1,4 +1,4 @@
-use std::{collections::HashMap, mem::size_of, path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use wgpu::{util::DeviceExt, Device};
 
@@ -95,6 +95,7 @@ pub struct GeometryLibrary {
 }
 
 impl GeometryLibrary {
+    #[allow(dead_code)]
     pub fn load_as_needed() -> Self {
         todo!();
     }

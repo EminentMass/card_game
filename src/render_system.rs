@@ -1,12 +1,10 @@
-use std::ops::Range;
-
 use bevy_ecs::system::{Query, ResMut};
 use nalgebra::Matrix4;
-use wgpu::{util::DeviceExt, Adapter, Device, Instance, Queue, Surface};
+use wgpu::{Adapter, Device, Instance, Queue, Surface};
 
 use winit::{dpi::PhysicalSize, window::Window};
 
-use crate::common_component::{Camera, GeometryType, MainCamera, RenderGeometry, Transform};
+use crate::common_component::{Camera, MainCamera, RenderGeometry, Transform};
 use crate::geometry_library::{GeometryId, GeometryLibrary};
 use crate::shader_library::{ShaderId, ShaderLibrary};
 
@@ -25,7 +23,14 @@ pub fn render(
             // update transform info to transform buffer on gpu
             let geoms: Vec<_> = geoms
                 .iter()
-                .map(|(RenderGeometry { geom_type }, pos)| (pos.isometry.to_matrix()))
+                .map(
+                    |(
+                        RenderGeometry {
+                            geom_type: _geom_type,
+                        },
+                        pos,
+                    )| (pos.isometry.to_matrix()),
+                )
                 .collect();
 
             let view_projection: Matrix4<f32> =
@@ -37,21 +42,21 @@ pub fn render(
 }
 
 pub struct RenderState {
-    instance: Instance,
+    _instance: Instance,
     surface: Surface,
     surface_config: wgpu::SurfaceConfiguration,
-    adapter: Adapter,
+    _adapter: Adapter,
     device: Device,
     queue: Queue,
     render_pipeline: wgpu::RenderPipeline,
 
-    depth_stencil_texture: wgpu::Texture,
+    _depth_stencil_texture: wgpu::Texture,
     depth_stencil_view: wgpu::TextureView,
-    depth_stencil_sampler: wgpu::Sampler,
+    _depth_stencil_sampler: wgpu::Sampler,
 
     texture_library: TextureLibrary,
 
-    shader_library: ShaderLibrary,
+    _shader_library: ShaderLibrary,
     geometry_library: GeometryLibrary,
 }
 
@@ -203,21 +208,21 @@ impl RenderState {
         surface.configure(&device, &surface_config);
 
         Self {
-            instance,
+            _instance: instance,
             surface,
             surface_config,
-            adapter,
+            _adapter: adapter,
             device,
             queue,
             render_pipeline,
 
-            depth_stencil_texture,
+            _depth_stencil_texture: depth_stencil_texture,
             depth_stencil_view,
-            depth_stencil_sampler,
+            _depth_stencil_sampler: depth_stencil_sampler,
 
             texture_library,
 
-            shader_library,
+            _shader_library: shader_library,
             geometry_library,
         }
     }
@@ -278,7 +283,7 @@ impl RenderState {
                 );
                 rpass.set_vertex_buffer(0, torus.vertices.slice(..));
                 rpass.set_index_buffer(torus.indices.slice(..), wgpu::IndexFormat::Uint16);
-                rpass.draw_indexed((0..torus.index_len), 0, (0..1));
+                rpass.draw_indexed(0..torus.index_len, 0, 0..1);
             }
         }
 

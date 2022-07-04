@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use bytemuck::{Pod, Zeroable};
 use nalgebra::{Matrix4, Vector2, Vector3, Vector4};
 use std::mem::size_of;
