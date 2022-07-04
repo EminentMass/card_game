@@ -123,23 +123,25 @@ fn compile_shader(compiler: &Compiler, path: &Path) -> Result<(), Box<dyn std::e
     file_out.write_all(artifact.as_binary_u8())?;
 
     // also write out assembly for debugging
-    let assembly = compiler.compile_into_spirv_assembly(
-        &contents,
-        shaderc::ShaderKind::InferFromSource, // All shader sources must have #pragma shader_stage()
-        &path.display().to_string(),
-        "main",
-        None,
-    )?;
+    if cfg!(debug_assertions) {
+        let assembly = compiler.compile_into_spirv_assembly(
+            &contents,
+            shaderc::ShaderKind::InferFromSource, // All shader sources must have #pragma shader_stage()
+            &path.display().to_string(),
+            "main",
+            None,
+        )?;
 
-    let path_out = map_file_extension(path, "spirvasm");
+        let path_out = map_file_extension(path, "spirvasm");
 
-    let mut file_out = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(path_out)?;
+        let mut file_out = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(path_out)?;
 
-    file_out.write_all(assembly.as_text().as_bytes())?;
+        file_out.write_all(assembly.as_text().as_bytes())?;
+    }
 
     Ok(())
 }
