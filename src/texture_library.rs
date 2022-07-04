@@ -1,6 +1,6 @@
 use ktx2::Reader;
 use std::{collections::HashMap, fs::File, io::Read, path::Path, sync::Arc};
-use wgpu::{Device, Queue};
+use wgpu::{BindGroupLayout, Device, Queue};
 
 crate::macros::parallel_enum_values! {
     (
@@ -14,14 +14,19 @@ crate::macros::parallel_enum_values! {
 // Each texture uses it's own internal texture, view, sampler, and bind group.
 // Some of this may be redundent. TODO: reduce redundency in samplers.
 pub struct Texture {
-    texture: wgpu::Texture,
-    texture_view: wgpu::TextureView,
-    texture_sampler: wgpu::Sampler,
-    texture_bind_group: wgpu::BindGroup,
+    pub handle: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+    pub bind_group: wgpu::BindGroup,
 }
 
 impl Texture {
-    pub fn from_file(device: &Device, queue: &Queue, path: &Path) -> Self {
+    pub fn from_file(
+        device: &Device,
+        queue: &Queue,
+        layout: &BindGroupLayout,
+        path: &Path,
+    ) -> Self {
         let mut file = File::open(path)
             .unwrap_or_else(|e| panic!("failed to open texture file {}: {}", path.display(), e));
 
@@ -57,7 +62,7 @@ impl Texture {
             depth_or_array_layers: 1,
         };
 
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let handle = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("texture"),
             size: texture_size,
             mip_level_count: 1,
@@ -69,7 +74,7 @@ impl Texture {
 
         queue.write_texture(
             wgpu::ImageCopyTextureBase {
-                texture: &texture,
+                texture: &handle,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -83,8 +88,8 @@ impl Texture {
             texture_size,
         );
 
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let view = handle.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -94,49 +99,26 @@ impl Texture {
             ..Default::default()
         });
 
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("texture bind group"),
-            layout: &&texture_bind_group_layout,
+            layout: &&layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                    resource: wgpu::BindingResource::TextureView(&view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture_sampler),
+                    resource: wgpu::BindingResource::Sampler(&sampler),
                 },
             ],
         });
 
         Self {
-            texture,
-            texture_view,
-            texture_sampler,
-            texture_bind_group,
+            handle,
+            view,
+            sampler,
+            bind_group,
         }
     }
 }
@@ -151,8 +133,18 @@ impl TextureLibrary {
         todo!();
     }
 
-    pub fn load_all() -> Self {
-        todo!();
+    pub fn load_all(device: &Device, queue: &Queue, layout: &BindGroupLayout) -> Self {
+        let textures = TEXTURE_PATH_PAIRS
+            .iter()
+            .map(|(id, t)| {
+                (
+                    *id,
+                    Arc::new(Texture::from_file(device, queue, layout, Path::new(t))),
+                )
+            })
+            .collect();
+
+        Self { textures }
     }
 
     pub fn get(&self, id: TextureId) -> &Texture {

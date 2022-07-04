@@ -7,10 +7,11 @@ use wgpu::{util::DeviceExt, Adapter, Device, Instance, Queue, Surface};
 use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::common_component::{Camera, GeometryType, MainCamera, RenderGeometry, Transform};
-use crate::geometry_library::GeometryLibrary;
+use crate::geometry_library::{GeometryId, GeometryLibrary};
 use crate::shader_library::{ShaderId, ShaderLibrary};
 
 use crate::data_types::Vertex;
+use crate::texture_library::{TextureId, TextureLibrary};
 use crate::util::BlockOn;
 
 // Render System
@@ -22,48 +23,14 @@ pub fn render(
     match camera.get_single() {
         Ok((cam, cam_pos, _)) => {
             // update transform info to transform buffer on gpu
-            let mut geoms: Vec<_> = geoms
+            let geoms: Vec<_> = geoms
                 .iter()
-                .map(|(RenderGeometry { geom_type }, pos)| (*geom_type, pos.isometry.to_matrix()))
+                .map(|(RenderGeometry { geom_type }, pos)| (pos.isometry.to_matrix()))
                 .collect();
-
-            geoms.sort_by(|(g1, _), (g2, _)| g1.cmp(g2));
-
-            let (plane_count, cube_count, tetrahedron_count): (u32, u32, u32) =
-                geoms.iter().fold((0, 0, 0), |a, (g, _)| match g {
-                    GeometryType::Plane => (a.0 + 1, a.1, a.2),
-                    GeometryType::Cube => (a.0, a.1 + 1, a.2),
-                    GeometryType::Tetrahedron => (a.0, a.1, a.2 + 1),
-                });
-
-            let (plane_range, cube_range, tetrahedron_range) = {
-                let mat_size = std::mem::size_of::<Matrix4<f32>>() as u32;
-                let plane_offset = plane_count * mat_size;
-                let cube_offset = plane_offset + cube_count * mat_size;
-                let tetrahedron_offset = cube_offset + tetrahedron_count * mat_size;
-
-                (
-                    0..plane_offset as u64,
-                    plane_offset as u64..cube_offset as u64,
-                    cube_offset as u64..tetrahedron_offset as u64,
-                )
-            };
-
-            let data: Vec<_> = geoms.iter().map(|(_, m)| *m).collect();
-
-            state.write_to_instance_buffer(&data);
 
             let view_projection: Matrix4<f32> =
                 cam.projection.as_matrix() * cam_pos.isometry.inverse().to_matrix();
-            state.render(
-                view_projection,
-                plane_count,
-                cube_count,
-                tetrahedron_count,
-                plane_range,
-                cube_range,
-                tetrahedron_range,
-            );
+            state.render(view_projection, geoms);
         }
         Err(e) => log::error!("failed to access main camera entity for render call: {}", e),
     }
@@ -77,19 +44,12 @@ pub struct RenderState {
     device: Device,
     queue: Queue,
     render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    instance_buffer: wgpu::Buffer,
-    instance_buffer_len: u64,
 
     depth_stencil_texture: wgpu::Texture,
     depth_stencil_view: wgpu::TextureView,
     depth_stencil_sampler: wgpu::Sampler,
 
-    texture: wgpu::Texture,
-    texture_view: wgpu::TextureView,
-    texture_sampler: wgpu::Sampler,
-    texture_bind_group: wgpu::BindGroup,
+    texture_library: TextureLibrary,
 
     shader_library: ShaderLibrary,
     geometry_library: GeometryLibrary,
@@ -130,54 +90,7 @@ impl RenderState {
         let fragment_shader = shader_library.get(ShaderId::FragmentShader).clone();
         let vertex_shader = shader_library.get(ShaderId::VertexShader).clone();
 
-        let geometry_library = GeometryLibrary::new();
-
-        let texture_data: [u8; 4 * 2 * 2] = [
-            0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255,
-        ];
-
-        let texture_size = wgpu::Extent3d {
-            width: 2,
-            height: 2,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("texture"),
-            size: texture_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        });
-
-        queue.write_texture(
-            wgpu::ImageCopyTextureBase {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &texture_data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: std::num::NonZeroU32::new(4 * texture_size.width),
-                rows_per_image: std::num::NonZeroU32::new(4 * texture_size.height),
-            },
-            texture_size,
-        );
-
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let geometry_library = GeometryLibrary::load_all(&device);
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -202,20 +115,7 @@ impl RenderState {
                 ],
             });
 
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("texture bind group"),
-            layout: &&texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture_sampler),
-                },
-            ],
-        });
+        let texture_library = TextureLibrary::load_all(&device, &queue, &texture_bind_group_layout);
 
         let depth_stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -265,7 +165,7 @@ impl RenderState {
             vertex: wgpu::VertexState {
                 module: &vertex_shader.handle(),
                 entry_point: vertex_shader.entry_point(),
-                buffers: &[Vertex::desc(), crate::data_types::Instance::desc()],
+                buffers: &[Vertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader.handle(),
@@ -302,26 +202,6 @@ impl RenderState {
 
         surface.configure(&device, &surface_config);
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(geometry_library.geometry_vertex_data()),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(geometry_library.geometry_index_data()),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let instance_buffer_len = 5;
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: std::mem::size_of::<Matrix4<f32>>() as u64 * instance_buffer_len as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         Self {
             instance,
             surface,
@@ -330,64 +210,19 @@ impl RenderState {
             device,
             queue,
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            instance_buffer,
-            instance_buffer_len,
 
             depth_stencil_texture,
             depth_stencil_view,
             depth_stencil_sampler,
 
-            texture,
-            texture_view,
-            texture_sampler,
-            texture_bind_group,
+            texture_library,
 
             shader_library,
             geometry_library,
         }
     }
 
-    pub fn write_to_instance_buffer(&mut self, data: &[Matrix4<f32>]) {
-        let bytes = bytemuck::cast_slice(&data);
-        if data.len() > self.instance_buffer_len as usize {
-            // double
-            let new_len: u64 = {
-                let mut len = self.instance_buffer_len * 2;
-                while data.len() > len as usize {
-                    len *= 2;
-                }
-                len as u64
-            };
-            self.instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: None,
-                size: std::mem::size_of::<Matrix4<f32>>() as u64 * new_len,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-
-            self.instance_buffer.slice(..).get_mapped_range_mut()[0..bytes.len()]
-                .copy_from_slice(bytes);
-            self.instance_buffer.unmap();
-
-            self.instance_buffer_len = new_len;
-        } else {
-            self.queue
-                .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&data));
-        }
-    }
-
-    pub fn render(
-        &mut self,
-        mvp: Matrix4<f32>,
-        plane_count: u32,
-        cube_count: u32,
-        tetrahedron_count: u32,
-        plane_range: Range<u64>,
-        cube_range: Range<u64>,
-        tetrahedron_range: Range<u64>,
-    ) {
+    pub fn render(&mut self, view_projection: Matrix4<f32>, objects: Vec<Matrix4<f32>>) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Outdated) => return, // Redraw is sometimes sent before resize
@@ -423,61 +258,28 @@ impl RenderState {
             });
 
             rpass.set_pipeline(&self.render_pipeline);
-            rpass.set_bind_group(0, &self.texture_bind_group, &[]);
-            rpass.set_push_constants(
-                wgpu::ShaderStages::all(),
+            rpass.set_bind_group(
                 0,
-                bytemuck::cast_slice(&mvp.as_slice()),
+                &self.texture_library.get(TextureId::CrabTexture).bind_group,
+                &[],
             );
 
-            // Draw planes
-            rpass.set_vertex_buffer(
-                0,
-                self.vertex_buffer
-                    .slice(GeometryLibrary::PLANE_VERTEX_OFFSET..),
-            );
-            rpass.set_vertex_buffer(1, self.instance_buffer.slice(plane_range));
-            rpass.set_index_buffer(
-                self.index_buffer
-                    .slice(GeometryLibrary::PLANE_INDEX_OFFSET..),
-                wgpu::IndexFormat::Uint16,
-            );
+            // Draw torus
+            let torus = self.geometry_library.get(GeometryId::TorusGeometry);
+            for t in objects {
+                // There is a matrix multiplication for each object. It may scale worse the gpu side multiplication for each.
+                // This could be moved to the gpu with either a larger push constant with view_projection and t matrix, or using a bound buffer for view_projection.
+                let mvp = view_projection * t;
 
-            rpass.draw_indexed(0..GeometryLibrary::PLANE_INDEX_COUNT, 0, 0..plane_count);
-
-            // Draw Cubes
-            rpass.set_vertex_buffer(
-                0,
-                self.vertex_buffer
-                    .slice(GeometryLibrary::CUBE_VERTEX_OFFSET..),
-            );
-            rpass.set_vertex_buffer(1, self.instance_buffer.slice(cube_range));
-            rpass.set_index_buffer(
-                self.index_buffer
-                    .slice(GeometryLibrary::CUBE_INDEX_OFFSET..),
-                wgpu::IndexFormat::Uint16,
-            );
-
-            rpass.draw_indexed(0..GeometryLibrary::CUBE_INDEX_COUNT, 0, 0..cube_count);
-
-            // Draw tetrahedrons
-            rpass.set_vertex_buffer(
-                0,
-                self.vertex_buffer
-                    .slice(GeometryLibrary::TETRAHEDRON_VERTEX_OFFSET..),
-            );
-            rpass.set_vertex_buffer(1, self.instance_buffer.slice(tetrahedron_range));
-            rpass.set_index_buffer(
-                self.index_buffer
-                    .slice(GeometryLibrary::TETRAHEDRON_INDEX_OFFSET..),
-                wgpu::IndexFormat::Uint16,
-            );
-
-            rpass.draw_indexed(
-                0..GeometryLibrary::TETRAHEDRON_INDEX_COUNT,
-                0,
-                0..tetrahedron_count,
-            );
+                rpass.set_push_constants(
+                    wgpu::ShaderStages::all(),
+                    0,
+                    bytemuck::cast_slice(&mvp.as_slice()),
+                );
+                rpass.set_vertex_buffer(0, torus.vertices.slice(..));
+                rpass.set_index_buffer(torus.indices.slice(..), wgpu::IndexFormat::Uint16);
+                rpass.draw_indexed((0..torus.index_len), 0, (0..1));
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));

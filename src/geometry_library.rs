@@ -1,139 +1,117 @@
-use std::mem::size_of;
+use std::{collections::HashMap, mem::size_of, path::Path, sync::Arc};
+
+use wgpu::{util::DeviceExt, Device};
 
 use crate::data_types::Vertex as Vert;
 
-macro_rules! v {
-    ($($x:expr, $y:expr, $z:expr),*) => {
-        [
-            $(Vert::pos(&[$x, $y, $z].into()),)*
-        ]
-    };
+use bytemuck::{cast_slice, cast_slice_mut};
+
+crate::macros::parallel_enum_values! {
+    (
+        GeometryId,
+        GEOMETRY_PATH_PAIRS,
+        str,
+    )
+    TorusGeometry -> "torus.obj",
 }
 
-macro_rules! vt {
-    ($($x:expr, $y:expr, $z:expr, $u:expr, $v:expr),*) => {
-        [
-            $(Vert::pos_and_tex(&[$x, $y, $z].into(), &[$u, $v].into()),)*
-        ]
-    };
+pub struct MeshData {
+    pub vertex_len: u32,
+    pub index_len: u32,
+    pub vertices: wgpu::Buffer,
+    pub indices: wgpu::Buffer,
 }
 
-#[rustfmt::skip]
-pub fn plane_vertices() -> [Vert; 4] {
-    vt![
-         1.0,  1.0, 0.0, 1.0, 1.0,
-        -1.0,  1.0, 0.0, 1.0, 0.0,
-         1.0, -1.0, 0.0, 0.0, 1.0,
-        -1.0, -1.0, 0.0, 0.0, 0.0
-    ]
-}
-#[rustfmt::skip]
-pub fn plane_indices() -> [u16; 6] {
-    [
-        3, 1, 0,
-        2, 3, 0,
-    ]
-}
+impl MeshData {
+    fn from_file(device: &Device, path: &Path) -> Self {
+        // TODO: use material data
+        let (models, _material) = tobj::load_obj(
+            path,
+            &tobj::LoadOptions {
+                single_index: true,
+                triangulate: true,
+                ignore_points: true,
+                ignore_lines: true,
+            },
+        )
+        .unwrap_or_else(|e| panic!("failed to open obj file {}: {}", path.display(), e));
 
-#[rustfmt::skip]
-pub fn cube_vertices() -> [Vert; 8] {
-    vt![
-        -1.0, -1.0,  1.0, 1.0, 1.0, // Front four
-         1.0, -1.0,  1.0, 1.0, 0.0,
-         1.0,  1.0,  1.0, 0.0, 1.0,
-        -1.0,  1.0,  1.0, 0.0, 0.0,
-        -1.0,  1.0, -1.0, 1.0, 1.0, // back four
-         1.0,  1.0, -1.0, 1.0, 0.0,
-         1.0, -1.0, -1.0, 0.0, 1.0,
-        -1.0, -1.0, -1.0, 0.0, 0.0
-    ]
-}
+        let mesh = &models
+            .first()
+            .unwrap_or_else(|| panic!("failed to parse obj file no models {}", path.display()))
+            .mesh;
 
-#[rustfmt::skip]
-pub fn cube_indices() -> [u16; 12 * 3] {
-    [
-        2, 1, 0, // Front
-        3, 2, 0,
-        6, 5, 7, // Back
-        5, 4, 7,
-        1, 6, 0, // Bottom
-        6, 7, 0,
-        3, 4, 2, // Top
-        4, 5, 2,
-        4, 3, 0, // Left
-        7, 4, 0,
-        2, 5, 1, // Right
-        5, 6, 1,
-    ]
-}
+        let mut index_data: Vec<u16> = mesh
+            .indices
+            .iter()
+            .map(|i: &u32| {
+                (*i).try_into()
+                    .expect("obj file index out of bounds greater than 65536")
+            })
+            .collect();
 
-#[rustfmt::skip]
-pub fn tetrahedron_vertices() -> [Vert; 4] {
-    // origin is center of object. base is under the y plane with the point sticking up
-    v![ 
-        0.0, -0.57735, -1.15470, // base
-       -1.0, -0.57735,  0.57735,
-        1.0, -0.57735,  0.57735,
-        0.0,  1.15470,  0.0      // point sticking up along y
-    ]
-}
+        cast_slice_mut(&mut index_data)
+            .iter_mut()
+            .for_each(|a: &mut [u16; 3]| a.reverse());
 
-#[rustfmt::skip]
-pub fn tetrahedron_indices() -> [u16; 12] {
-    [
-        0, 1, 2,
-        0, 3, 1, 
-        3, 0, 2, 
-        2, 1, 3
-    ]
+        let vertex_data: Vec<Vert> = {
+            let p = cast_slice::<f32, [f32; 3]>(&mesh.positions).iter();
+            let n = cast_slice::<f32, [f32; 3]>(&mesh.normals).iter();
+            let uv = cast_slice(&mesh.texcoords).iter();
+
+            p.zip(n)
+                .zip(uv)
+                .map(|(([x, y, z], [nx, ny, nz]), uv)| Vert {
+                    position: [*x, *y, *z, 1.0].into(),
+                    normal: [*nx, *ny, *nz, 0.0].into(),
+                    texture: *uv,
+                })
+                .collect()
+        };
+
+        let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: cast_slice(&vertex_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: cast_slice(&index_data),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        Self {
+            vertices,
+            indices,
+            vertex_len: vertex_data.len() as u32,
+            index_len: index_data.len() as u32,
+        }
+    }
 }
 
 pub struct GeometryLibrary {
-    vertex_data: Vec<u8>,
-    index_data: Vec<u8>,
+    geometries: HashMap<GeometryId, Arc<MeshData>>,
 }
 
 impl GeometryLibrary {
-    pub const PLANE_VERTEX_OFFSET: u64 = 0;
-    pub const CUBE_VERTEX_OFFSET: u64 = size_of::<[Vert; 4]>() as u64;
-    pub const TETRAHEDRON_VERTEX_OFFSET: u64 = size_of::<[Vert; 4 + 8]>() as u64; // plane plus cube vertices
-
-    pub const PLANE_INDEX_OFFSET: u64 = 0;
-    pub const CUBE_INDEX_OFFSET: u64 = size_of::<[u16; 6]>() as u64;
-    pub const TETRAHEDRON_INDEX_OFFSET: u64 = size_of::<[u16; 6 + 12 * 3]>() as u64; // plane plus cube vertices
-
-    pub const PLANE_INDEX_COUNT: u32 = 6;
-    pub const CUBE_INDEX_COUNT: u32 = 12 * 3;
-    pub const TETRAHEDRON_INDEX_COUNT: u32 = 12;
-
-    pub fn new() -> Self {
-        use bytemuck::cast_slice as to_u8;
-
-        let vertex_data = to_u8(&plane_vertices())
-            .iter()
-            .chain(to_u8(&cube_vertices()))
-            .chain(to_u8(&tetrahedron_vertices()))
-            .cloned()
-            .collect();
-
-        let index_data = to_u8(&plane_indices())
-            .iter()
-            .chain(to_u8(&cube_indices()))
-            .chain(to_u8(&tetrahedron_indices()))
-            .cloned()
-            .collect();
-
-        Self {
-            vertex_data,
-            index_data,
-        }
+    pub fn load_as_needed() -> Self {
+        todo!();
     }
 
-    pub fn geometry_vertex_data(&self) -> &[u8] {
-        &self.vertex_data
+    pub fn load_all(device: &Device) -> Self {
+        let geometries = GEOMETRY_PATH_PAIRS
+            .iter()
+            .map(|(id, g)| (*id, Arc::new(MeshData::from_file(device, Path::new(g)))))
+            .collect();
+
+        Self { geometries }
     }
 
-    pub fn geometry_index_data(&self) -> &[u8] {
-        &self.index_data
+    pub fn get(&self, id: GeometryId) -> &MeshData {
+        &self
+            .geometries
+            .get(&id)
+            .expect("tried to access texture with bad id")
     }
 }
