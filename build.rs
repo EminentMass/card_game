@@ -1,6 +1,7 @@
 use std::{
+    env,
     fs::{File, OpenOptions},
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -71,7 +72,7 @@ fn shader_files_at<'a>(
     Ok(Box::new(iter))
 }
 
-fn map_file_extension(path: &Path, append: &str) -> PathBuf {
+fn map_to_out_path(path: &Path, append: &str) -> PathBuf {
     let extension_out = {
         let extension = path
             .extension()
@@ -86,7 +87,11 @@ fn map_file_extension(path: &Path, append: &str) -> PathBuf {
         }
     };
 
-    let mut path_out = path.to_owned();
+    let out_dir_src = env::var("OUT_DIR").unwrap();
+    let out_dir = Path::new(&out_dir_src);
+
+    let mut path_out = out_dir.join(path); //.to_owned();
+
     path_out.set_extension(extension_out);
     path_out
 }
@@ -97,6 +102,18 @@ fn map_file_extension(path: &Path, append: &str) -> PathBuf {
 //
 fn compile_shader(compiler: &Compiler, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("compiling {}", path.display());
+
+    let out_dir = env::var("OUT_DIR").unwrap();
+
+    // probably better to check for the directory but this will do for now
+    match std::fs::create_dir(Path::new(&out_dir).join("shader")) {
+        Ok(()) => (),
+        Err(err) => {
+            if !(err.kind() == ErrorKind::AlreadyExists) {
+                Err(err).unwrap()
+            }
+        }
+    }
 
     let mut file = File::open(&path)?;
 
@@ -112,7 +129,9 @@ fn compile_shader(compiler: &Compiler, path: &Path) -> Result<(), Box<dyn std::e
     )?;
 
     // add compiled file extension
-    let path_out = map_file_extension(path, "spirv");
+    let path_out = map_to_out_path(path, "spirv");
+
+    println!("path out is {}", path_out.display());
 
     let mut file_out = OpenOptions::new()
         .write(true)
@@ -132,7 +151,7 @@ fn compile_shader(compiler: &Compiler, path: &Path) -> Result<(), Box<dyn std::e
             None,
         )?;
 
-        let path_out = map_file_extension(path, "spirvasm");
+        let path_out = map_to_out_path(path, "spirvasm");
 
         let mut file_out = OpenOptions::new()
             .write(true)

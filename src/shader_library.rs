@@ -147,12 +147,14 @@ impl ShaderLibrary {
     }
 
     pub fn load_all(device: &Device) -> Self {
+        let build_out_dir = Path::new(&env!("OUT_DIR"));
+
         let shaders = SHADER_PATH_PAIRS
             .iter()
             .map(|(id, s)| {
                 (
                     *id,
-                    Arc::new(ShaderBuilder::new(Path::new(s)).build(device)),
+                    Arc::new(ShaderBuilder::new(&build_out_dir.join(s)).build(device)),
                 )
             })
             .collect();
