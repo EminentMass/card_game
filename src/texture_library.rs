@@ -8,7 +8,9 @@ crate::macros::parallel_enum_values! {
         TEXTURE_PATH_PAIRS,
         str,
     )
+    UnknownTexture -> "texture/crabdance-seamless-tile.ktx2",
     CrabTexture -> "texture/crabdance-seamless-tile.ktx2",
+    CurlyBraceTexture -> "texture/curly-brace.ktx2",
 }
 
 // Each texture uses it's own internal texture, view, sampler, and bind group.
@@ -90,9 +92,9 @@ impl Texture {
 
         let view = handle.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
@@ -101,7 +103,7 @@ impl Texture {
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("texture bind group"),
-            layout: &&layout,
+            layout: layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -148,10 +150,16 @@ impl TextureLibrary {
         Self { textures }
     }
 
-    pub fn get(&self, id: TextureId) -> &Texture {
-        &self
-            .textures
-            .get(&id)
-            .expect("tried to access texture with bad id")
+    pub fn get(&self, id: Option<TextureId>) -> &Texture {
+        match id {
+            Some(id) => &self
+                .textures
+                .get(&id)
+                .expect("tried to access texture with bad id"),
+            None => &self
+                .textures
+                .get(&TextureId::UnknownTexture)
+                .expect("tried to access default texture and failed"),
+        }
     }
 }

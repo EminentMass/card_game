@@ -6,6 +6,7 @@ use bevy_ecs::{
     world::World,
 };
 use nalgebra::{Isometry3, Perspective3, UnitQuaternion, Vector3};
+use rand::Rng;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -13,8 +14,12 @@ use winit::{
 };
 
 use crate::{
-    common_component::{Camera, GeometryType, MainCamera, RenderGeometry, Transform},
+    common_component::{
+        Camera, GlobalLight, MainCamera, PointLight, RenderGeometry, Rotate, Texture, Transform,
+    },
+    geometry_library::GeometryId,
     render_system::{self, RenderState},
+    texture_library::TextureId,
     time::{frame_criteria, update_criteria, TimeResource},
 };
 
@@ -66,11 +71,22 @@ impl Game {
         world
             .spawn()
             .insert(Transform {
+                isometry: Isometry3::translation(0.0, -2.0, -5.0),
+                parent: None,
+                children: vec![],
+            })
+            .insert(RenderGeometry::new(GeometryId::SceneTestGeometry))
+            .insert(Texture::new(TextureId::CurlyBraceTexture));
+        world
+            .spawn()
+            .insert(Transform {
                 isometry: Isometry3::translation(0.0, 0.0, -5.0),
                 parent: None,
                 children: vec![],
             })
-            .insert(RenderGeometry::new(GeometryType::Plane));
+            .insert(RenderGeometry::new(GeometryId::TorusGeometry))
+            .insert(Texture::new(TextureId::CrabTexture))
+            .insert(Rotate { axis: rand_vec() });
         world
             .spawn()
             .insert(Transform {
@@ -78,7 +94,9 @@ impl Game {
                 parent: None,
                 children: vec![],
             })
-            .insert(RenderGeometry::new(GeometryType::Cube));
+            .insert(RenderGeometry::new(GeometryId::TorusGeometry))
+            .insert(Texture::new(TextureId::CrabTexture))
+            .insert(Rotate { axis: rand_vec() });
         world
             .spawn()
             .insert(Transform {
@@ -86,9 +104,17 @@ impl Game {
                 parent: None,
                 children: vec![],
             })
-            .insert(RenderGeometry::new(GeometryType::Tetrahedron));
+            .insert(RenderGeometry::new(GeometryId::TorusGeometry))
+            .insert(Texture::new(TextureId::CrabTexture))
+            .insert(Rotate { axis: rand_vec() });
 
         for i in 0..10 {
+            let tex_id = if i % 2 == 0 {
+                TextureId::CrabTexture
+            } else {
+                TextureId::CurlyBraceTexture
+            };
+
             world
                 .spawn()
                 .insert(Transform {
@@ -96,12 +122,58 @@ impl Game {
                     parent: None,
                     children: vec![],
                 })
-                .insert(RenderGeometry::new(GeometryType::Tetrahedron));
+                .insert(RenderGeometry::new(GeometryId::TorusGeometry))
+                .insert(Texture::new(tex_id))
+                .insert(Rotate { axis: rand_vec() });
         }
+        world
+            .spawn()
+            .insert(Transform {
+                isometry: Isometry3::translation(0.0, 0.0, 0.0),
+                parent: None,
+                children: vec![],
+            })
+            .insert(PointLight {
+                color: [1.0, 1.0, 1.0].into(),
+                power: 1.0,
+                radius: 1.0,
+            });
+
+        world.spawn().insert(GlobalLight {
+            color: [1.0, 1.0, 1.0].into(),
+            power: 100.0,
+            direction: [1.0, 1.0, 1.0].into(),
+        });
+        /*
+        world
+            .spawn()
+            .insert(Transform {
+                isometry: Isometry3::translation(5.0, 0.0, 0.0),
+                parent: None,
+                children: vec![],
+            })
+            .insert(PointLight {
+                color: [1.0, 0.0, 0.0].into(),
+                power: 1.0,
+                radius: 1.0,
+            });
+        world
+            .spawn()
+            .insert(Transform {
+                isometry: Isometry3::translation(-5.0, 0.0, 0.0),
+                parent: None,
+                children: vec![],
+            })
+            .insert(PointLight {
+                color: [0.0, 1.0, 0.0].into(),
+                power: 1.0,
+                radius: 1.0,
+            });
+             */
 
         let update_stage = SystemStage::parallel()
             .with_run_criteria(update_criteria)
-            .with_system(rotate_geometries);
+            .with_system(rotate);
         let mut update_schedule = Schedule::default();
         update_schedule.add_stage("update", update_stage);
 
@@ -156,15 +228,18 @@ impl Game {
     }
 }
 
-fn rotate_geometries(time: Res<TimeResource>, mut geoms: Query<(&RenderGeometry, &mut Transform)>) {
+fn rotate(time: Res<TimeResource>, mut objects: Query<(&Rotate, &mut Transform)>) {
     let dt = time.update_dt.as_secs_f32();
-    for (RenderGeometry { geom_type }, mut trans) in geoms.iter_mut() {
-        let axis = match geom_type {
-            GeometryType::Plane => Vector3::x(),
-            GeometryType::Cube => Vector3::y(),
-            GeometryType::Tetrahedron => Vector3::z(),
-        };
+    for (Rotate { axis }, mut trans) in objects.iter_mut() {
         let rot = UnitQuaternion::new(axis * dt);
         trans.isometry.append_rotation_wrt_center_mut(&rot);
     }
+}
+
+fn rand_vec() -> Vector3<f32> {
+    let mut rng = rand::thread_rng();
+
+    let mut r = || rng.gen::<f32>() - 0.5;
+
+    Vector3::new(r(), r(), r()).normalize()
 }

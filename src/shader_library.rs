@@ -14,8 +14,9 @@ crate::macros::parallel_enum_values!(
         SHADER_PATH_PAIRS,
         str,
     )
-    VertexShader -> "shader/vertex_shader.vsspirv",
-    FragmentShader -> "shader/fragment_shader.fsspirv",
+    LightAssignment -> "shader/light_assignment.comp.spv",
+    VertexShader -> "shader/vertex_shader.vert.spv",
+    FragmentShader -> "shader/fragment_shader.frag.spv",
 );
 
 #[derive(Debug)]
@@ -57,7 +58,7 @@ impl Shader {
         );
         let data = bytemuck::cast_slice(&contents);
 
-        let handle = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        let handle = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(name),
             source: wgpu::ShaderSource::SpirV(Cow::Borrowed(data)),
         });

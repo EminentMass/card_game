@@ -1,10 +1,10 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, ops::Range, path::Path, sync::Arc};
 
-use wgpu::{util::DeviceExt, Device};
+use wgpu::{util::DeviceExt, BufferAddress, Device};
 
 use crate::data_types::Vertex as Vert;
 
-use bytemuck::{cast_slice, cast_slice_mut};
+use bytemuck::cast_slice;
 
 crate::macros::parallel_enum_values! {
     (
@@ -12,7 +12,15 @@ crate::macros::parallel_enum_values! {
         GEOMETRY_PATH_PAIRS,
         str,
     )
-    TorusGeometry -> "torus.obj",
+    TorusGeometry -> "model/torus.obj",
+    SceneTestGeometry -> "model/scene_test.obj",
+}
+
+#[allow(dead_code)]
+pub struct MultiMeshData {
+    pub index_ranges: Vec<Range<BufferAddress>>,
+    pub vertices: wgpu::Buffer,
+    pub indices: wgpu::Buffer,
 }
 
 pub struct MeshData {
@@ -50,24 +58,9 @@ impl MeshData {
             })
             .collect();
 
-        cast_slice_mut(&mut index_data)
-            .iter_mut()
-            .for_each(|a: &mut [u16; 3]| a.reverse());
+        reverse_indices(&mut index_data);
 
-        let vertex_data: Vec<Vert> = {
-            let p = cast_slice::<f32, [f32; 3]>(&mesh.positions).iter();
-            let n = cast_slice::<f32, [f32; 3]>(&mesh.normals).iter();
-            let uv = cast_slice(&mesh.texcoords).iter();
-
-            p.zip(n)
-                .zip(uv)
-                .map(|(([x, y, z], [nx, ny, nz]), uv)| Vert {
-                    position: [*x, *y, *z, 1.0].into(),
-                    normal: [*nx, *ny, *nz, 0.0].into(),
-                    texture: *uv,
-                })
-                .collect()
-        };
+        let vertex_data: Vec<Vert> = transmute_vertex_data(mesh);
 
         let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -115,4 +108,29 @@ impl GeometryLibrary {
             .get(&id)
             .expect("tried to access texture with bad id")
     }
+}
+
+// transmute vertex data from tobj mesh representation to internal rendering engine representation
+fn transmute_vertex_data(mesh: &tobj::Mesh) -> Vec<Vert> {
+    // the creation of tobj mesh should create proper length data
+    let p = mesh.positions.chunks(3);
+    let n = mesh.normals.chunks(3);
+    let t = mesh.texcoords.chunks(2);
+
+    p.zip(n)
+        .zip(t)
+        .map(|((p, n), t)| Vert {
+            position: [p[0], p[1], p[2], 1.0].into(),
+            normal: [n[0], n[1], n[2], 0.0].into(),
+            texture: [t[0], t[1]].into(),
+        })
+        .collect()
+}
+
+fn reverse_indices<T>(indices: &mut [T]) {
+    assert!(
+        indices.len() % 3 == 0,
+        "tried to reverse index data with incorrect length"
+    );
+    indices.chunks_mut(3).for_each(|a: &mut [T]| a.reverse());
 }

@@ -2,7 +2,12 @@
 
 use bytemuck::{Pod, Zeroable};
 use nalgebra::{Matrix4, Vector2, Vector3, Vector4};
-use std::mem::size_of;
+use std::{mem::size_of, num::NonZeroU64};
+
+use crate::common_component::{
+    GlobalLight as GlobalLightComponent, PointLight as PointLightComponent,
+    SpotLight as SpotLightComponent, Transform,
+};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -37,6 +42,100 @@ impl Vertex {
             position: [pos.x, pos.y, pos.z, 1.0].into(),
             normal: Vector4::zeros(),
             texture: *tex,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct Camera {
+    pub view_projection: Matrix4<f32>,
+    pub position: Vector4<f32>,
+}
+
+impl Camera {
+    pub const BINDING_SIZE: Option<NonZeroU64> =
+        NonZeroU64::new(std::mem::size_of::<Self>() as u64);
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct GlobalLight {
+    pub color: Vector4<f32>,     // w is power
+    pub direction: Vector4<f32>, // w is always 0 as this is a direction not point
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct PointLight {
+    pub position: Vector4<f32>, // w is radius
+    pub color: Vector4<f32>,    // w is power
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct SpotLight {
+    pub position: Vector4<f32>,  // w is radius
+    pub color: Vector4<f32>,     // w is power
+    pub direction: Vector4<f32>, // w is cut off
+}
+
+impl Default for GlobalLight {
+    fn default() -> Self {
+        Self {
+            color: [0.0, 0.0, 0.0, 0.0].into(),
+            direction: Vector4::x(),
+        }
+    }
+}
+
+impl Default for PointLight {
+    fn default() -> Self {
+        Self {
+            position: [0.0, 0.0, 0.0, 0.0].into(),
+            color: [0.0, 0.0, 0.0, 0.0].into(),
+        }
+    }
+}
+
+impl Default for SpotLight {
+    fn default() -> Self {
+        Self {
+            position: [0.0, 0.0, 0.0, 0.0].into(),
+            color: [0.0, 0.0, 0.0, 0.0].into(),
+            direction: [1.0, 0.0, 0.0, 1.0].into(),
+        }
+    }
+}
+
+impl From<&GlobalLightComponent> for GlobalLight {
+    fn from(gl: &GlobalLightComponent) -> Self {
+        Self {
+            direction: [gl.direction.x, gl.direction.y, gl.direction.z, 0.0].into(),
+            color: [gl.color.x, gl.color.y, gl.color.z, gl.power].into(),
+        }
+    }
+}
+
+impl From<(&PointLightComponent, &Transform)> for PointLight {
+    fn from((pl, t): (&PointLightComponent, &Transform)) -> Self {
+        let t = &t.isometry.translation;
+
+        Self {
+            position: [t.x, t.y, t.z, pl.radius].into(),
+            color: [pl.color.x, pl.color.y, pl.color.z, pl.power].into(),
+        }
+    }
+}
+
+impl From<(&SpotLightComponent, &Transform)> for SpotLight {
+    fn from((sl, t): (&SpotLightComponent, &Transform)) -> Self {
+        let t = &t.isometry.translation;
+
+        Self {
+            position: [t.x, t.y, t.z, sl.radius].into(),
+            color: [sl.color.x, sl.color.y, sl.color.z, sl.power].into(),
+            direction: [sl.direction.x, sl.direction.y, sl.direction.z, sl.cut_off].into(),
         }
     }
 }
